@@ -25,19 +25,20 @@ Implemented a ratcheting-aware mismatch detection system that:
 
 ## Implementation Details
 
-### Core Functions Added
+### Core Functions Enhanced
 
-#### 1. `CompareDeclarativeErrorsAndEmitMismatchesUpdate`
+#### 1. `CompareDeclarativeErrorsAndEmitMismatches` (enhanced with variadic parameters)
 ```go
-func CompareDeclarativeErrorsAndEmitMismatchesUpdate(
+func CompareDeclarativeErrorsAndEmitMismatches(
     ctx context.Context, 
     imperativeErrs, declarativeErrs field.ErrorList, 
     takeover bool, 
-    newObj, oldObj runtime.Object
+    objs ...runtime.Object
 )
 ```
-- Enhanced version that accepts old and new objects for ratcheting analysis
-- Delegates to the ratcheting-aware gathering function
+- **NO NAME CHANGE** - Same function name as before
+- Enhanced to accept optional old and new objects via variadic parameters for ratcheting analysis
+- Maintains full backward compatibility with existing 4-parameter calls
 
 #### 2. `gatherDeclarativeValidationMismatches` (enhanced)
 ```go
@@ -84,17 +85,17 @@ func getNestedField(
 
 ### Backward Compatibility
 
-The original functions remain unchanged and delegate to the new implementations:
+**ZERO BREAKING CHANGES** - All existing function signatures are preserved:
 
 ```go
-func CompareDeclarativeErrorsAndEmitMismatches(...) {
-    CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(..., nil, nil)
-}
+// Original calls continue to work exactly as before
+rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover)
 
-func gatherDeclarativeValidationMismatches(...) []string {
-    return gatherDeclarativeValidationMismatchesWithRatcheting(..., nil, nil)
-}
+// New calls with ratcheting support use the same function name with additional parameters
+rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover, newObj, oldObj)
 ```
+
+The implementation uses Go's variadic parameters to handle both calling patterns seamlessly.
 
 ### Integration Points Updated
 
@@ -106,11 +107,11 @@ Updated calls in validation strategies to use ratcheting-aware comparison:
 
 Example:
 ```go
-// Before
+// Before (still works exactly the same)
 rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover)
 
-// After  
-rest.CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(ctx, errs, declarativeErrs, takeover, newObj, oldObj)
+// After (same function name, just additional parameters)
+rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover, newObj, oldObj)
 ```
 
 ## Ratcheting Logic

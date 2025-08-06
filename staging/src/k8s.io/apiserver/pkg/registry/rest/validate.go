@@ -180,14 +180,12 @@ func parseSubresourcePath(subresourcePath string) ([]string, error) {
 
 // CompareDeclarativeErrorsAndEmitMismatches checks for mismatches between imperative and declarative validation
 // and logs + emits metrics when inconsistencies are found
-func CompareDeclarativeErrorsAndEmitMismatches(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool) {
-	CompareDeclarativeErrorsAndEmitMismatchesUpdate(ctx, imperativeErrs, declarativeErrs, takeover, nil, nil)
-}
-
-// CompareDeclarativeErrorsAndEmitMismatchesUpdate checks for mismatches between imperative and declarative validation
-// and logs + emits metrics when inconsistencies are found. For update operations, when oldObj and newObj are provided,
-// it applies ratcheting logic to ignore errors on unchanged fields, preventing false positive mismatches.
-func CompareDeclarativeErrorsAndEmitMismatchesUpdate(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool, newObj, oldObj runtime.Object) {
+func CompareDeclarativeErrorsAndEmitMismatches(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool, objs ...runtime.Object) {
+	var newObj, oldObj runtime.Object
+	if len(objs) >= 2 {
+		newObj, oldObj = objs[0], objs[1]
+	}
+	
 	logger := klog.FromContext(ctx)
 	mismatchDetails := gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs, takeover, newObj, oldObj)
 	for _, detail := range mismatchDetails {
@@ -301,12 +299,7 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 	return mismatchDetails
 }
 
-// gatherDeclarativeValidationMismatchesLegacy compares imperative and declarative validation errors
-// and returns detailed information about any mismatches found. Errors are compared via type, field, and origin.
-// This is the legacy version that doesn't support ratcheting for backward compatibility.
-func gatherDeclarativeValidationMismatchesLegacy(imperativeErrs, declarativeErrs field.ErrorList, takeover bool) []string {
-	return gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs, takeover, nil, nil)
-}
+
 
 // applyRatchetingToImperativeErrors filters out imperative validation errors for fields that are unchanged
 // between old and new objects, mimicking the ratcheting behavior of declarative validation.

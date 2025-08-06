@@ -157,7 +157,7 @@ func (csrStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) 
 
 		// Compare imperative and declarative errors and emit metric if there's a mismatch
 		// Use ratcheting-aware comparison to prevent false positives on unchanged fields
-		rest.CompareDeclarativeErrorsAndEmitMismatchesUpdate(ctx, errs, declarativeErrs, takeover, newCSR, oldCSR)
+		rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover, newCSR, oldCSR)
 
 		// Only apply declarative errors if takeover is enabled
 		if takeover {
@@ -290,7 +290,7 @@ func (csrStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Ob
 
 		// Compare imperative and declarative errors and emit metric if there's a mismatch
 		// Use ratcheting-aware comparison to prevent false positives on unchanged fields
-		rest.CompareDeclarativeErrorsAndEmitMismatchesUpdate(ctx, errs, declarativeErrs, takeover, newCSR, oldCSR)
+		rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover, newCSR, oldCSR)
 
 		// Only apply declarative errors if takeover is enabled
 		if takeover {
@@ -361,7 +361,7 @@ func (csrApprovalStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.
 
 		// Compare imperative and declarative errors and emit metric if there's a mismatch
 		// Use ratcheting-aware comparison to prevent false positives on unchanged fields
-		rest.CompareDeclarativeErrorsAndEmitMismatchesUpdate(ctx, errs, declarativeErrs, takeover, newCSR, oldCSR)
+		rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover, newCSR, oldCSR)
 
 		// Only apply declarative errors if takeover is enabled
 		if takeover {

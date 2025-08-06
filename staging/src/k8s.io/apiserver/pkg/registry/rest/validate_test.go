@@ -356,7 +356,7 @@ func TestGatherDeclarativeValidationMismatches(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			details := gatherDeclarativeValidationMismatchesLegacy(tc.imperativeErrors, tc.declarativeErrors, tc.takeover)
+			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover, nil, nil)
 			// Check if mismatches were found if expected
 			if tc.expectMismatches && len(details) == 0 {
 				t.Errorf("Expected mismatches but got none")
