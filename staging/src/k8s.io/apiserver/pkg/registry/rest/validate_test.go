@@ -189,6 +189,7 @@ func (p Pod) DeepCopyObject() runtime.Object {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      p.Name,
 			Namespace: p.Namespace,
+			Labels:    p.Labels,
 		},
 		RestartPolicy: p.RestartPolicy,
 	}
@@ -355,7 +356,7 @@ func TestGatherDeclarativeValidationMismatches(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover)
+			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover, nil, nil)
 			// Check if mismatches were found if expected
 			if tc.expectMismatches && len(details) == 0 {
 				t.Errorf("Expected mismatches but got none")
@@ -689,4 +690,273 @@ func equalErrorLists(a, b field.ErrorList) bool {
 	}
 	// Both non-nil: do a normal DeepEqual
 	return reflect.DeepEqual(a, b)
+}
+
+// TestGatherDeclarativeValidationMismatchesUpdate tests the ratcheting-aware
+// version of mismatch detection to ensure it properly filters out errors on unchanged fields
+func TestGatherDeclarativeValidationMismatchesUpdate(t *testing.T) {
+	restartPolicyPath := field.NewPath("restartPolicy")
+	namePath := field.NewPath("metadata").Child("name")
+	
+	// Create test objects with changes and unchanged fields
+	oldPod := &Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		RestartPolicy: "Always",
+	}
+	
+	newPodUnchangedInvalid := &Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Labels: map[string]string{"new": "label"}},
+		RestartPolicy: "Always", // UNCHANGED
+	}
+	
+	newPodChangedInvalid := &Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"}, // UNCHANGED
+		RestartPolicy: "Never", // CHANGED
+	}
+
+	// Errors for testing
+	restartPolicyErr := field.Invalid(restartPolicyPath, "Never", "invalid restart policy").WithOrigin("minimum")
+	coveredRestartPolicyErr := field.Invalid(restartPolicyPath, "Never", "invalid restart policy").WithOrigin("minimum")
+	coveredRestartPolicyErr.CoveredByDeclarative = true
+	
+	coveredNameErr := field.Invalid(namePath, "test", "invalid name").WithOrigin("minimum")
+	coveredNameErr.CoveredByDeclarative = true
+
+	testCases := []struct {
+		name                    string
+		imperativeErrors        field.ErrorList
+		declarativeErrors       field.ErrorList
+		newObj                  runtime.Object
+		oldObj                  runtime.Object
+		takeover                bool
+		expectMismatches        bool
+		expectDetailsContaining []string
+	}{
+		{
+			name: "Ratcheting: error on unchanged field should be filtered out - no mismatch",
+			imperativeErrors: field.ErrorList{
+				coveredNameErr, // Error on unchanged field
+			},
+			declarativeErrors: field.ErrorList{
+				// Declarative validation would have ratcheted this error away
+			},
+			newObj:           newPodUnchangedInvalid,
+			oldObj:           oldPod,
+			takeover:         false,
+			expectMismatches: false,
+			expectDetailsContaining: []string{},
+		},
+		{
+			name: "Ratcheting: error on changed field should not be filtered - mismatch detected",
+			imperativeErrors: field.ErrorList{
+				coveredRestartPolicyErr, // Error on changed field
+			},
+			declarativeErrors: field.ErrorList{
+				// Declarative validation also reports error but imperative doesn't match
+			},
+			newObj:           newPodChangedInvalid,
+			oldObj:           oldPod,
+			takeover:         false,
+			expectMismatches: true,
+			expectDetailsContaining: []string{
+				"unmatched error(s) found",
+				"restartPolicy",
+			},
+		},
+		{
+			name: "Ratcheting: mixed changed/unchanged fields",
+			imperativeErrors: field.ErrorList{
+				coveredNameErr,            // Error on unchanged field - should be filtered
+				coveredRestartPolicyErr,   // Error on changed field - should not be filtered
+			},
+			declarativeErrors: field.ErrorList{
+				restartPolicyErr, // Matches the changed field error
+			},
+			newObj:           newPodChangedInvalid,
+			oldObj:           oldPod,
+			takeover:         false,
+			expectMismatches: false,
+			expectDetailsContaining: []string{},
+		},
+		{
+			name: "Ratcheting: no old/new objects provided - fallback to original behavior",
+			imperativeErrors: field.ErrorList{
+				coveredNameErr,
+			},
+			declarativeErrors: field.ErrorList{
+				// No declarative errors
+			},
+			newObj:           nil,
+			oldObj:           nil,
+			takeover:         false,
+			expectMismatches: true,
+			expectDetailsContaining: []string{
+				"unmatched error(s) found",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover, tc.newObj, tc.oldObj)
+			
+			if tc.expectMismatches {
+				if len(details) == 0 {
+					t.Errorf("Expected mismatches but got none")
+				}
+				for _, expectedText := range tc.expectDetailsContaining {
+					found := false
+					for _, detail := range details {
+						if strings.Contains(detail, expectedText) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("Expected detail containing %q but not found in: %v", expectedText, details)
+					}
+				}
+			} else {
+				if len(details) > 0 {
+					t.Errorf("Expected no mismatches but got: %v", details)
+				}
+			}
+		})
+	}
+}
+
+// TestApplyRatchetingToImperativeErrors tests the field comparison logic for ratcheting
+func TestApplyRatchetingToImperativeErrors(t *testing.T) {
+	restartPolicyPath := field.NewPath("spec").Child("restartPolicy")
+	namePath := field.NewPath("metadata").Child("name")
+	namespacePath := field.NewPath("metadata").Child("namespace")
+
+	oldPod := &Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		RestartPolicy: "Always",
+	}
+
+	newPodChanged := &Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "kube-system"}, // Changed
+		RestartPolicy: "Always", // Unchanged
+	}
+
+	testCases := []struct {
+		name             string
+		imperativeErrors field.ErrorList
+		newObj           runtime.Object
+		oldObj           runtime.Object
+		expectedFiltered field.ErrorList
+	}{
+		{
+			name: "Filter out errors on unchanged fields",
+			imperativeErrors: field.ErrorList{
+				field.Invalid(restartPolicyPath, "Always", "invalid policy"),     // Unchanged field - filter
+				field.Invalid(namespacePath, "kube-system", "invalid ns"),        // Changed field - keep
+				field.Invalid(namePath, "test", "invalid name"),                  // Unchanged field - filter
+			},
+			newObj: newPodChanged,
+			oldObj: oldPod,
+			expectedFiltered: field.ErrorList{
+				field.Invalid(namespacePath, "kube-system", "invalid ns"),
+			},
+		},
+		{
+			name: "Keep all errors when objects are identical",
+			imperativeErrors: field.ErrorList{
+				field.Invalid(restartPolicyPath, "Always", "invalid policy"),
+			},
+			newObj: oldPod,
+			oldObj: oldPod,
+			expectedFiltered: field.ErrorList{
+				// All errors should be filtered out since objects are identical
+			},
+		},
+		{
+			name: "Handle objects with no changes",
+			imperativeErrors: field.ErrorList{
+				field.Invalid(restartPolicyPath, "Always", "invalid policy"),
+			},
+			newObj: oldPod, // Same object
+			oldObj: oldPod,
+			expectedFiltered: field.ErrorList{
+				// All errors should be filtered out since objects are identical
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			filtered := applyRatchetingToImperativeErrors(tc.imperativeErrors, tc.newObj, tc.oldObj)
+
+			if len(filtered) != len(tc.expectedFiltered) {
+				t.Errorf("Expected %d filtered errors, got %d", len(tc.expectedFiltered), len(filtered))
+			}
+
+			// Check that the right errors were kept
+			for i, expectedErr := range tc.expectedFiltered {
+				if i < len(filtered) {
+					if filtered[i].Field != expectedErr.Field {
+						t.Errorf("Expected error at index %d to have field %q, got %q", i, expectedErr.Field, filtered[i].Field)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestIsFieldUnchanged tests the field comparison logic
+func TestIsFieldUnchanged(t *testing.T) {
+	oldObj := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"replicas": 3,
+			"template": map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"labels": map[string]interface{}{
+						"app": "test",
+					},
+				},
+			},
+		},
+		"metadata": map[string]interface{}{
+			"name": "test",
+		},
+	}
+
+	newObj := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"replicas": 5, // Changed
+			"template": map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"labels": map[string]interface{}{
+						"app": "test", // Unchanged
+					},
+				},
+			},
+		},
+		"metadata": map[string]interface{}{
+			"name": "test", // Unchanged
+		},
+	}
+
+	testCases := []struct {
+		fieldPath string
+		expected  bool
+	}{
+		{"spec.replicas", false},                           // Changed
+		{"metadata.name", true},                            // Unchanged
+		{"spec.template.metadata.labels.app", true},       // Unchanged nested
+		{"spec.nonexistent", true},                         // Both don't exist
+		{"spec.template.metadata.labels", true},           // Unchanged nested object
+		{"", false},                                        // Root objects are different
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("field_%s", tc.fieldPath), func(t *testing.T) {
+			result := isFieldUnchanged(tc.fieldPath, newObj, oldObj)
+			if result != tc.expected {
+				t.Errorf("isFieldUnchanged(%q) = %v, expected %v", tc.fieldPath, result, tc.expected)
+			}
+		})
+	}
 }

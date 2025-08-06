@@ -207,7 +207,8 @@ func (rcStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) f
 		declarativeErrs := rest.ValidateUpdateDeclaratively(ctx, legacyscheme.Scheme, newRc, oldRc, rest.WithTakeover(takeover))
 
 		// Compare imperative and declarative errors and emit metric if there's a mismatch
-		rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover)
+		// Use ratcheting-aware comparison to prevent false positives on unchanged fields
+		rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover, newRc, oldRc)
 
 		// Only apply declarative errors if takeover is enabled
 		if takeover {

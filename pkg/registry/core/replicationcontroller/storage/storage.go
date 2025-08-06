@@ -326,7 +326,8 @@ func (i *scaleUpdatedObjectInfo) UpdatedObject(ctx context.Context, oldObj runti
 			ctx, legacyscheme.Scheme, scale, oldScale, rest.WithTakeover(takeover), rest.WithSubresourceMapper(i.scaleGVKMapper))
 
 		// Compare imperative and declarative errors and log + emit metric if there's a mismatch
-		rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover)
+		// Use ratcheting-aware comparison to prevent false positives on unchanged fields
+		rest.CompareDeclarativeErrorsAndEmitMismatches(ctx, errs, declarativeErrs, takeover, scale, oldScale)
 
 		// Only apply declarative errors if takeover is enabled
 		if takeover {
