@@ -19,6 +19,7 @@ package rest
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -233,6 +234,13 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 	remaining := make(field.ErrorList, len(declarativeErrs))
 	copy(remaining, declarativeErrs)
 
+	// Early exit: if no objects provided, skip ratcheting logic entirely
+	useRatcheting := oldObj != nil && newObj != nil
+	var fieldCache map[string]bool
+	if useRatcheting {
+		fieldCache = make(map[string]bool)
+	}
+
 	// Match each "covered" imperative error to declarative errors.
 	// We use a fuzzy matching approach to find corresponding declarative errors
 	// for each imperative error marked as CoveredByDeclarative.
@@ -249,8 +257,19 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 		}
 
 		// Skip errors for unchanged fields if we have old and new objects
-		if oldObj != nil && newObj != nil && isFieldUnchanged(field.NewPath(iErr.Field), oldObj, newObj) {
-			continue
+		if useRatcheting {
+			fieldKey := iErr.Field
+			if unchanged, cached := fieldCache[fieldKey]; cached {
+				if unchanged {
+					continue
+				}
+			} else {
+				unchanged := isFieldUnchangedCached(fieldKey, oldObj, newObj)
+				fieldCache[fieldKey] = unchanged
+				if unchanged {
+					continue
+				}
+			}
 		}
 
 		tmp := make(field.ErrorList, 0, len(remaining))
@@ -281,8 +300,19 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 	// Any remaining unmatched declarative errors are considered "extra"
 	for _, dErr := range remaining {
 		// Skip errors for unchanged fields if we have old and new objects
-		if oldObj != nil && newObj != nil && isFieldUnchanged(field.NewPath(dErr.Field), oldObj, newObj) {
-			continue
+		if useRatcheting {
+			fieldKey := dErr.Field
+			if unchanged, cached := fieldCache[fieldKey]; cached {
+				if unchanged {
+					continue
+				}
+			} else {
+				unchanged := isFieldUnchangedCached(fieldKey, oldObj, newObj)
+				fieldCache[fieldKey] = unchanged
+				if unchanged {
+					continue
+				}
+			}
 		}
 
 		mismatchDetails = append(mismatchDetails,
@@ -298,13 +328,20 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 	return mismatchDetails
 }
 
-// isFieldUnchanged checks if the field specified by the field path is unchanged between old and new objects.
-// This function implements a simple field-by-field comparison to determine if ratcheting should apply.
-func isFieldUnchanged(fieldPath *field.Path, oldObj, newObj runtime.Object) bool {
-	if fieldPath == nil {
+// isFieldUnchangedCached checks if the field specified by the field path is unchanged between old and new objects.
+// This is an optimized version that avoids expensive conversions when possible.
+func isFieldUnchangedCached(fieldKey string, oldObj, newObj runtime.Object) bool {
+	if fieldKey == "" {
 		return false
 	}
 
+	// For simple field paths, try direct access first
+	if !strings.Contains(fieldKey, "[") && !strings.Contains(fieldKey, ".") {
+		// Simple field - try direct access
+		return isSimpleFieldUnchanged(fieldKey, oldObj, newObj)
+	}
+
+	// For complex paths, fall back to unstructured conversion
 	// Convert objects to unstructured for easier field access
 	oldUnstructured, err := runtime.DefaultUnstructuredConverter.ToUnstructured(oldObj)
 	if err != nil {
@@ -316,21 +353,59 @@ func isFieldUnchanged(fieldPath *field.Path, oldObj, newObj runtime.Object) bool
 	}
 
 	// Get the field values from both objects
-	oldValue := getFieldValue(oldUnstructured, fieldPath)
-	newValue := getFieldValue(newUnstructured, fieldPath)
+	oldValue := getFieldValueOptimized(oldUnstructured, fieldKey)
+	newValue := getFieldValueOptimized(newUnstructured, fieldKey)
 
 	// Compare the values using semantic equality
 	return apiequality.Semantic.DeepEqual(oldValue, newValue)
 }
 
-// getFieldValue extracts the value at the specified field path from the unstructured object.
-func getFieldValue(obj map[string]interface{}, fieldPath *field.Path) interface{} {
-	if fieldPath == nil {
+// isSimpleFieldUnchanged checks if a simple field (no dots or brackets) is unchanged.
+// This avoids expensive unstructured conversion for simple cases.
+func isSimpleFieldUnchanged(fieldKey string, oldObj, newObj runtime.Object) bool {
+	// Try to access the field directly using reflection
+	oldVal := getSimpleFieldValue(oldObj, fieldKey)
+	newVal := getSimpleFieldValue(newObj, fieldKey)
+	return apiequality.Semantic.DeepEqual(oldVal, newVal)
+}
+
+// getSimpleFieldValue extracts a simple field value using reflection.
+func getSimpleFieldValue(obj runtime.Object, fieldKey string) interface{} {
+	if obj == nil {
 		return nil
 	}
 
+	// Use reflection to get the field value
+	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+
+	field := v.FieldByName(fieldKey)
+	if !field.IsValid() {
+		return nil
+	}
+
+	return field.Interface()
+}
+
+// getFieldValueOptimized extracts the value at the specified field path from the unstructured object.
+// This is an optimized version that avoids string splitting when possible.
+func getFieldValueOptimized(obj map[string]interface{}, fieldKey string) interface{} {
+	if fieldKey == "" {
+		return nil
+	}
+
+	// For simple fields, direct access
+	if !strings.Contains(fieldKey, ".") && !strings.Contains(fieldKey, "[") {
+		return obj[fieldKey]
+	}
+
 	// Convert field path to string segments
-	segments := strings.Split(fieldPath.String(), ".")
+	segments := strings.Split(fieldKey, ".")
 	
 	current := obj
 	for i, segment := range segments {
