@@ -19,8 +19,10 @@ package rest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/operation"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -179,9 +181,9 @@ func parseSubresourcePath(subresourcePath string) ([]string, error) {
 
 // CompareDeclarativeErrorsAndEmitMismatches checks for mismatches between imperative and declarative validation
 // and logs + emits metrics when inconsistencies are found
-func CompareDeclarativeErrorsAndEmitMismatches(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool) {
+func CompareDeclarativeErrorsAndEmitMismatches(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool, oldObj, newObj runtime.Object) {
 	logger := klog.FromContext(ctx)
-	mismatchDetails := gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs, takeover)
+	mismatchDetails := gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs, takeover, oldObj, newObj)
 	for _, detail := range mismatchDetails {
 		// Log information about the mismatch using contextual logger
 		logger.Error(nil, detail)
@@ -192,8 +194,9 @@ func CompareDeclarativeErrorsAndEmitMismatches(ctx context.Context, imperativeEr
 }
 
 // gatherDeclarativeValidationMismatches compares imperative and declarative validation errors
-// and returns detailed information about any mismatches found. Errors are compared via type, field, and origin
-func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field.ErrorList, takeover bool) []string {
+// and returns detailed information about any mismatches found. Errors are compared via type, field, and origin.
+// If oldObj and newObj are provided, errors for unchanged fields are ignored to account for ratcheting logic.
+func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field.ErrorList, takeover bool, oldObj, newObj runtime.Object) []string {
 	var mismatchDetails []string
 	// short circuit here to minimize allocs for usual case of 0 validation errors
 	if len(imperativeErrs) == 0 && len(declarativeErrs) == 0 {
@@ -245,6 +248,11 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 			continue
 		}
 
+		// Skip errors for unchanged fields if we have old and new objects
+		if oldObj != nil && newObj != nil && isFieldUnchanged(field.NewPath(iErr.Field), oldObj, newObj) {
+			continue
+		}
+
 		tmp := make(field.ErrorList, 0, len(remaining))
 		matchCount := 0
 
@@ -272,6 +280,11 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 
 	// Any remaining unmatched declarative errors are considered "extra"
 	for _, dErr := range remaining {
+		// Skip errors for unchanged fields if we have old and new objects
+		if oldObj != nil && newObj != nil && isFieldUnchanged(field.NewPath(dErr.Field), oldObj, newObj) {
+			continue
+		}
+
 		mismatchDetails = append(mismatchDetails,
 			fmt.Sprintf(
 				"Unexpected difference between hand written validation and declarative validation error results, extra error(s) found %s. "+
@@ -283,6 +296,101 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 	}
 
 	return mismatchDetails
+}
+
+// isFieldUnchanged checks if the field specified by the field path is unchanged between old and new objects.
+// This function implements a simple field-by-field comparison to determine if ratcheting should apply.
+func isFieldUnchanged(fieldPath *field.Path, oldObj, newObj runtime.Object) bool {
+	if fieldPath == nil {
+		return false
+	}
+
+	// Convert objects to unstructured for easier field access
+	oldUnstructured, err := runtime.DefaultUnstructuredConverter.ToUnstructured(oldObj)
+	if err != nil {
+		return false
+	}
+	newUnstructured, err := runtime.DefaultUnstructuredConverter.ToUnstructured(newObj)
+	if err != nil {
+		return false
+	}
+
+	// Get the field values from both objects
+	oldValue := getFieldValue(oldUnstructured, fieldPath)
+	newValue := getFieldValue(newUnstructured, fieldPath)
+
+	// Compare the values using semantic equality
+	return apiequality.Semantic.DeepEqual(oldValue, newValue)
+}
+
+// getFieldValue extracts the value at the specified field path from the unstructured object.
+func getFieldValue(obj map[string]interface{}, fieldPath *field.Path) interface{} {
+	if fieldPath == nil {
+		return nil
+	}
+
+	// Convert field path to string segments
+	segments := strings.Split(fieldPath.String(), ".")
+	
+	current := obj
+	for i, segment := range segments {
+		if current == nil {
+			return nil
+		}
+
+		// Handle array indexing (e.g., "spec.containers[0].name")
+		if strings.Contains(segment, "[") && strings.Contains(segment, "]") {
+			// Extract array name and index
+			openBracket := strings.Index(segment, "[")
+			closeBracket := strings.Index(segment, "]")
+			if openBracket == -1 || closeBracket == -1 {
+				return nil
+			}
+			
+			arrayName := segment[:openBracket]
+			indexStr := segment[openBracket+1 : closeBracket]
+			index, err := strconv.Atoi(indexStr)
+			if err != nil {
+				return nil
+			}
+
+			// Get the array
+			array, ok := current[arrayName].([]interface{})
+			if !ok {
+				return nil
+			}
+
+			// Check if index is valid
+			if index < 0 || index >= len(array) {
+				return nil
+			}
+
+			// If this is the last segment, return the value
+			if i == len(segments)-1 {
+				return array[index]
+			}
+
+			// Otherwise, continue traversing
+			if item, ok := array[index].(map[string]interface{}); ok {
+				current = item
+			} else {
+				return nil
+			}
+		} else {
+			// Regular field access
+			if i == len(segments)-1 {
+				return current[segment]
+			}
+
+			if next, ok := current[segment].(map[string]interface{}); ok {
+				current = next
+			} else {
+				return nil
+			}
+		}
+	}
+
+	return nil
 }
 
 // createDeclarativeValidationPanicHandler returns a function with panic recovery logic
