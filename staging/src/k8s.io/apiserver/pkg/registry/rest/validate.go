@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"reflect"
 
 	"k8s.io/apimachinery/pkg/api/operation"
 
@@ -178,10 +179,18 @@ func parseSubresourcePath(subresourcePath string) ([]string, error) {
 }
 
 // CompareDeclarativeErrorsAndEmitMismatches checks for mismatches between imperative and declarative validation
-// and logs + emits metrics when inconsistencies are found
+// and logs + emits metrics when inconsistencies are found. For update operations, it supports ratcheting-aware
+// mismatch detection by ignoring errors on unchanged fields when old and new objects are provided.
 func CompareDeclarativeErrorsAndEmitMismatches(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool) {
+	CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(ctx, imperativeErrs, declarativeErrs, takeover, nil, nil)
+}
+
+// CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting checks for mismatches between imperative and declarative validation
+// and logs + emits metrics when inconsistencies are found. For update operations, when oldObj and newObj are provided,
+// it applies ratcheting logic to ignore errors on unchanged fields, preventing false positive mismatches.
+func CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool, newObj, oldObj runtime.Object) {
 	logger := klog.FromContext(ctx)
-	mismatchDetails := gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs, takeover)
+	mismatchDetails := gatherDeclarativeValidationMismatchesWithRatcheting(imperativeErrs, declarativeErrs, takeover, newObj, oldObj)
 	for _, detail := range mismatchDetails {
 		// Log information about the mismatch using contextual logger
 		logger.Error(nil, detail)
@@ -194,6 +203,14 @@ func CompareDeclarativeErrorsAndEmitMismatches(ctx context.Context, imperativeEr
 // gatherDeclarativeValidationMismatches compares imperative and declarative validation errors
 // and returns detailed information about any mismatches found. Errors are compared via type, field, and origin
 func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field.ErrorList, takeover bool) []string {
+	return gatherDeclarativeValidationMismatchesWithRatcheting(imperativeErrs, declarativeErrs, takeover, nil, nil)
+}
+
+// gatherDeclarativeValidationMismatchesWithRatcheting compares imperative and declarative validation errors
+// and returns detailed information about any mismatches found. Errors are compared via type, field, and origin.
+// For update operations, when newObj and oldObj are provided, it applies ratcheting logic to filter out
+// imperative errors on unchanged fields before comparison, preventing false positive mismatches.
+func gatherDeclarativeValidationMismatchesWithRatcheting(imperativeErrs, declarativeErrs field.ErrorList, takeover bool, newObj, oldObj runtime.Object) []string {
 	var mismatchDetails []string
 	// short circuit here to minimize allocs for usual case of 0 validation errors
 	if len(imperativeErrs) == 0 && len(declarativeErrs) == 0 {
@@ -207,12 +224,18 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 	fuzzyMatcher := field.ErrorMatcher{}.ByType().ByField().ByOrigin().RequireOriginWhenInvalid()
 	exactMatcher := field.ErrorMatcher{}.Exactly()
 
+	// Filter imperative errors to apply ratcheting logic if old and new objects are available
+	filteredImperativeErrs := imperativeErrs
+	if newObj != nil && oldObj != nil {
+		filteredImperativeErrs = applyRatchetingToImperativeErrors(imperativeErrs, newObj, oldObj)
+	}
+
 	// Dedupe imperative errors of exact error matches as they are
 	// not intended and come from (buggy) duplicate validation calls
 	// This is necessary as without deduping we could get unmatched
 	// imperative errors for cases that are correct (matching)
 	dedupedImperativeErrs := field.ErrorList{}
-	for _, err := range imperativeErrs {
+	for _, err := range filteredImperativeErrs {
 		found := false
 		for _, existingErr := range dedupedImperativeErrs {
 			if exactMatcher.Matches(existingErr, err) {
@@ -283,6 +306,98 @@ func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field
 	}
 
 	return mismatchDetails
+}
+
+// applyRatchetingToImperativeErrors filters out imperative validation errors for fields that are unchanged
+// between old and new objects, mimicking the ratcheting behavior of declarative validation.
+// This prevents false positive mismatches when imperative validation reports errors on unchanged fields
+// that would be ignored by declarative validation due to ratcheting.
+func applyRatchetingToImperativeErrors(imperativeErrs field.ErrorList, newObj, oldObj runtime.Object) field.ErrorList {
+	if len(imperativeErrs) == 0 {
+		return imperativeErrs
+	}
+
+	// Convert objects to unstructured for field-by-field comparison
+	newUnstructured, err := runtime.DefaultUnstructuredConverter.ToUnstructured(newObj)
+	if err != nil {
+		// If conversion fails, return original errors to avoid hiding real issues
+		return imperativeErrs
+	}
+
+	oldUnstructured, err := runtime.DefaultUnstructuredConverter.ToUnstructured(oldObj)
+	if err != nil {
+		// If conversion fails, return original errors to avoid hiding real issues
+		return imperativeErrs
+	}
+
+	var filteredErrs field.ErrorList
+	for _, err := range imperativeErrs {
+		// Apply ratcheting logic: ignore errors for unchanged fields
+		if !isFieldUnchanged(err.Field, newUnstructured, oldUnstructured) {
+			// Field has changed, keep the error
+			filteredErrs = append(filteredErrs, err)
+		}
+		// If field is unchanged, skip the error (ratcheting behavior)
+	}
+
+	return filteredErrs
+}
+
+// isFieldUnchanged checks if the field at the given path is unchanged between old and new objects.
+// It returns true if the field values are deeply equal, false otherwise.
+func isFieldUnchanged(fieldPath string, newObj, oldObj map[string]interface{}) bool {
+	if fieldPath == "" {
+		return reflect.DeepEqual(newObj, oldObj)
+	}
+
+	// Parse the field path (e.g., "spec.replicas" -> ["spec", "replicas"])
+	pathSegments := strings.Split(fieldPath, ".")
+	
+	newValue, newExists := getNestedField(newObj, pathSegments)
+	oldValue, oldExists := getNestedField(oldObj, pathSegments)
+
+	// If both don't exist, consider unchanged
+	if !newExists && !oldExists {
+		return true
+	}
+
+	// If only one exists, it's changed
+	if newExists != oldExists {
+		return false
+	}
+
+	// Both exist, compare values
+	return reflect.DeepEqual(newValue, oldValue)
+}
+
+// getNestedField retrieves a nested field value from a map using a path of keys.
+// Returns the value and a boolean indicating if the field exists.
+func getNestedField(obj map[string]interface{}, path []string) (interface{}, bool) {
+	if len(path) == 0 {
+		return obj, true
+	}
+
+	current := obj
+	for i, key := range path {
+		value, exists := current[key]
+		if !exists {
+			return nil, false
+		}
+
+		// If this is the last segment, return the value
+		if i == len(path)-1 {
+			return value, true
+		}
+
+		// Navigate deeper - value must be a map for the path to continue
+		if nestedMap, ok := value.(map[string]interface{}); ok {
+			current = nestedMap
+		} else {
+			return nil, false
+		}
+	}
+
+	return current, true
 }
 
 // createDeclarativeValidationPanicHandler returns a function with panic recovery logic
