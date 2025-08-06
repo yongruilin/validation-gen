@@ -179,18 +179,17 @@ func parseSubresourcePath(subresourcePath string) ([]string, error) {
 }
 
 // CompareDeclarativeErrorsAndEmitMismatches checks for mismatches between imperative and declarative validation
-// and logs + emits metrics when inconsistencies are found. For update operations, it supports ratcheting-aware
-// mismatch detection by ignoring errors on unchanged fields when old and new objects are provided.
+// and logs + emits metrics when inconsistencies are found
 func CompareDeclarativeErrorsAndEmitMismatches(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool) {
-	CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(ctx, imperativeErrs, declarativeErrs, takeover, nil, nil)
+	CompareDeclarativeErrorsAndEmitMismatchesUpdate(ctx, imperativeErrs, declarativeErrs, takeover, nil, nil)
 }
 
-// CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting checks for mismatches between imperative and declarative validation
+// CompareDeclarativeErrorsAndEmitMismatchesUpdate checks for mismatches between imperative and declarative validation
 // and logs + emits metrics when inconsistencies are found. For update operations, when oldObj and newObj are provided,
 // it applies ratcheting logic to ignore errors on unchanged fields, preventing false positive mismatches.
-func CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool, newObj, oldObj runtime.Object) {
+func CompareDeclarativeErrorsAndEmitMismatchesUpdate(ctx context.Context, imperativeErrs, declarativeErrs field.ErrorList, takeover bool, newObj, oldObj runtime.Object) {
 	logger := klog.FromContext(ctx)
-	mismatchDetails := gatherDeclarativeValidationMismatchesWithRatcheting(imperativeErrs, declarativeErrs, takeover, newObj, oldObj)
+	mismatchDetails := gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs, takeover, newObj, oldObj)
 	for _, detail := range mismatchDetails {
 		// Log information about the mismatch using contextual logger
 		logger.Error(nil, detail)
@@ -201,16 +200,10 @@ func CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(ctx context.Context
 }
 
 // gatherDeclarativeValidationMismatches compares imperative and declarative validation errors
-// and returns detailed information about any mismatches found. Errors are compared via type, field, and origin
-func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field.ErrorList, takeover bool) []string {
-	return gatherDeclarativeValidationMismatchesWithRatcheting(imperativeErrs, declarativeErrs, takeover, nil, nil)
-}
-
-// gatherDeclarativeValidationMismatchesWithRatcheting compares imperative and declarative validation errors
 // and returns detailed information about any mismatches found. Errors are compared via type, field, and origin.
 // For update operations, when newObj and oldObj are provided, it applies ratcheting logic to filter out
 // imperative errors on unchanged fields before comparison, preventing false positive mismatches.
-func gatherDeclarativeValidationMismatchesWithRatcheting(imperativeErrs, declarativeErrs field.ErrorList, takeover bool, newObj, oldObj runtime.Object) []string {
+func gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs field.ErrorList, takeover bool, newObj, oldObj runtime.Object) []string {
 	var mismatchDetails []string
 	// short circuit here to minimize allocs for usual case of 0 validation errors
 	if len(imperativeErrs) == 0 && len(declarativeErrs) == 0 {
@@ -306,6 +299,13 @@ func gatherDeclarativeValidationMismatchesWithRatcheting(imperativeErrs, declara
 	}
 
 	return mismatchDetails
+}
+
+// gatherDeclarativeValidationMismatchesLegacy compares imperative and declarative validation errors
+// and returns detailed information about any mismatches found. Errors are compared via type, field, and origin.
+// This is the legacy version that doesn't support ratcheting for backward compatibility.
+func gatherDeclarativeValidationMismatchesLegacy(imperativeErrs, declarativeErrs field.ErrorList, takeover bool) []string {
+	return gatherDeclarativeValidationMismatches(imperativeErrs, declarativeErrs, takeover, nil, nil)
 }
 
 // applyRatchetingToImperativeErrors filters out imperative validation errors for fields that are unchanged

@@ -27,9 +27,9 @@ Implemented a ratcheting-aware mismatch detection system that:
 
 ### Core Functions Added
 
-#### 1. `CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting`
+#### 1. `CompareDeclarativeErrorsAndEmitMismatchesUpdate`
 ```go
-func CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(
+func CompareDeclarativeErrorsAndEmitMismatchesUpdate(
     ctx context.Context, 
     imperativeErrs, declarativeErrs field.ErrorList, 
     takeover bool, 
@@ -39,15 +39,15 @@ func CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(
 - Enhanced version that accepts old and new objects for ratcheting analysis
 - Delegates to the ratcheting-aware gathering function
 
-#### 2. `gatherDeclarativeValidationMismatchesWithRatcheting`
+#### 2. `gatherDeclarativeValidationMismatches` (enhanced)
 ```go
-func gatherDeclarativeValidationMismatchesWithRatcheting(
+func gatherDeclarativeValidationMismatches(
     imperativeErrs, declarativeErrs field.ErrorList, 
     takeover bool, 
     newObj, oldObj runtime.Object
 ) []string
 ```
-- Core logic that applies ratcheting filtering before mismatch detection
+- Enhanced to accept old/new objects and apply ratcheting filtering before mismatch detection
 - Calls `applyRatchetingToImperativeErrors` when old/new objects are available
 
 #### 3. `applyRatchetingToImperativeErrors`

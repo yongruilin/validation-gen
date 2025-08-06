@@ -356,7 +356,7 @@ func TestGatherDeclarativeValidationMismatches(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover)
+			details := gatherDeclarativeValidationMismatchesLegacy(tc.imperativeErrors, tc.declarativeErrors, tc.takeover)
 			// Check if mismatches were found if expected
 			if tc.expectMismatches && len(details) == 0 {
 				t.Errorf("Expected mismatches but got none")
@@ -692,9 +692,9 @@ func equalErrorLists(a, b field.ErrorList) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-// TestGatherDeclarativeValidationMismatchesWithRatcheting tests the ratcheting-aware
+// TestGatherDeclarativeValidationMismatchesUpdate tests the ratcheting-aware
 // version of mismatch detection to ensure it properly filters out errors on unchanged fields
-func TestGatherDeclarativeValidationMismatchesWithRatcheting(t *testing.T) {
+func TestGatherDeclarativeValidationMismatchesUpdate(t *testing.T) {
 	restartPolicyPath := field.NewPath("restartPolicy")
 	namePath := field.NewPath("metadata").Child("name")
 	
@@ -798,7 +798,7 @@ func TestGatherDeclarativeValidationMismatchesWithRatcheting(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			details := gatherDeclarativeValidationMismatchesWithRatcheting(tc.imperativeErrors, tc.declarativeErrors, tc.takeover, tc.newObj, tc.oldObj)
+			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover, tc.newObj, tc.oldObj)
 			
 			if tc.expectMismatches {
 				if len(details) == 0 {

@@ -327,7 +327,7 @@ func (i *scaleUpdatedObjectInfo) UpdatedObject(ctx context.Context, oldObj runti
 
 		// Compare imperative and declarative errors and log + emit metric if there's a mismatch
 		// Use ratcheting-aware comparison to prevent false positives on unchanged fields
-		rest.CompareDeclarativeErrorsAndEmitMismatchesWithRatcheting(ctx, errs, declarativeErrs, takeover, scale, oldScale)
+		rest.CompareDeclarativeErrorsAndEmitMismatchesUpdate(ctx, errs, declarativeErrs, takeover, scale, oldScale)
 
 		// Only apply declarative errors if takeover is enabled
 		if takeover {
