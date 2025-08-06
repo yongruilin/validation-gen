@@ -351,11 +351,111 @@ func TestGatherDeclarativeValidationMismatches(t *testing.T) {
 			expectMismatches:        false,
 			expectDetailsContaining: []string{},
 		},
+		{
+			name: "Errors for unchanged fields are ignored - no mismatch",
+			imperativeErrors: field.ErrorList{
+				coveredErrB,
+			},
+			declarativeErrors: field.ErrorList{},
+			takeover:          false,
+			expectMismatches:  true, // Should report mismatch because no objects provided for ratcheting
+			expectDetailsContaining: []string{
+				"Unexpected difference between hand written validation and declarative validation error results",
+				"unmatched error(s) found",
+			},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover)
+			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover, nil, nil)
+			// Check if mismatches were found if expected
+			if tc.expectMismatches && len(details) == 0 {
+				t.Errorf("Expected mismatches but got none")
+			}
+			// Check if details contain expected text
+			detailsStr := strings.Join(details, " ")
+			for _, expectedContent := range tc.expectDetailsContaining {
+				if !strings.Contains(detailsStr, expectedContent) {
+					t.Errorf("Expected details to contain: %q, but they didn't.\nDetails were:\n%s",
+						expectedContent, strings.Join(details, "\n"))
+				}
+			}
+			// If we don't expect any details, make sure none provided
+			if len(tc.expectDetailsContaining) == 0 && len(details) > 0 {
+				t.Errorf("Expected no details, but got %d details: %v", len(details), details)
+			}
+		})
+	}
+}
+
+// TestGatherDeclarativeValidationMismatchesWithRatcheting tests the ratcheting logic
+// by providing old and new objects and verifying that errors for unchanged fields are ignored.
+func TestGatherDeclarativeValidationMismatchesWithRatcheting(t *testing.T) {
+	// Test that when oldObj and newObj are provided, the function works correctly
+	// even if the objects don't have the specific fields being tested
+	oldObj := &Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+		RestartPolicy: "Always",
+	}
+	newObj := &Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+		RestartPolicy: "Always", // Same as oldObj
+	}
+
+	// Test that the function handles nil objects gracefully
+	replicasPath := field.NewPath("spec").Child("replicas")
+	errA := field.Invalid(replicasPath, nil, "regular error A")
+	errA.CoveredByDeclarative = true
+	
+	testCases := []struct {
+		name                    string
+		imperativeErrors        field.ErrorList
+		declarativeErrors       field.ErrorList
+		takeover                bool
+		oldObj                  runtime.Object
+		newObj                  runtime.Object
+		expectMismatches        bool
+		expectDetailsContaining []string
+	}{
+		{
+			name: "Function works with nil objects",
+			imperativeErrors: field.ErrorList{
+				errA,
+			},
+			declarativeErrors: field.ErrorList{},
+			takeover:          false,
+			oldObj:            nil,
+			newObj:            nil,
+			expectMismatches:  true, // Should report mismatch because no ratcheting
+			expectDetailsContaining: []string{
+				"Unexpected difference between hand written validation and declarative validation error results",
+				"unmatched error(s) found",
+			},
+		},
+		{
+			name: "Function works with non-nil objects",
+			imperativeErrors: field.ErrorList{
+				errA,
+			},
+			declarativeErrors: field.ErrorList{},
+			takeover:          false,
+			oldObj:            oldObj,
+			newObj:            newObj,
+			expectMismatches:  false, // Should not report mismatch because field doesn't exist in objects (unchanged)
+			expectDetailsContaining: []string{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			details := gatherDeclarativeValidationMismatches(tc.imperativeErrors, tc.declarativeErrors, tc.takeover, tc.oldObj, tc.newObj)
 			// Check if mismatches were found if expected
 			if tc.expectMismatches && len(details) == 0 {
 				t.Errorf("Expected mismatches but got none")
@@ -422,7 +522,7 @@ func TestCompareDeclarativeErrorsAndEmitMismatches(t *testing.T) {
 			defer klog.LogToStderr(true)
 			ctx := context.Background()
 
-			CompareDeclarativeErrorsAndEmitMismatches(ctx, tc.imperativeErrs, tc.declarativeErrs, tc.takeover)
+			CompareDeclarativeErrorsAndEmitMismatches(ctx, tc.imperativeErrs, tc.declarativeErrs, tc.takeover, nil, nil)
 
 			klog.Flush()
 			logOutput := buf.String()
