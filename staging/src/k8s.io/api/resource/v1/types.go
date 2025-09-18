@@ -723,6 +723,7 @@ type DeviceClaim struct {
 	//
 	// +optional
 	// +listType=atomic
+	// +k8s:maxItems=32
 	Requests []DeviceRequest `json:"requests" protobuf:"bytes,1,name=requests"`
 
 	// These constraints must be satisfied by the set of devices that get
@@ -730,6 +731,7 @@ type DeviceClaim struct {
 	//
 	// +optional
 	// +listType=atomic
+	// +k8s:maxItems=32
 	Constraints []DeviceConstraint `json:"constraints,omitempty" protobuf:"bytes,2,opt,name=constraints"`
 
 	// This field holds configuration for multiple potential drivers which
@@ -738,6 +740,7 @@ type DeviceClaim struct {
 	//
 	// +optional
 	// +listType=atomic
+	// +k8s:maxItems=32
 	Config []DeviceClaimConfiguration `json:"config,omitempty" protobuf:"bytes,3,opt,name=config"`
 
 	// Potential future extension, ignored by older schedulers. This is
@@ -808,6 +811,7 @@ type DeviceRequest struct {
 	// +oneOf=deviceRequestType
 	// +listType=atomic
 	// +featureGate=DRAPrioritizedList
+	// +k8s:maxItems=8
 	FirstAvailable []DeviceSubRequest `json:"firstAvailable,omitempty" protobuf:"bytes,3,name=firstAvailable"`
 }
 
@@ -835,6 +839,7 @@ type ExactDeviceRequest struct {
 	//
 	// +optional
 	// +listType=atomic
+	// +k8s:maxItems=32
 	Selectors []DeviceSelector `json:"selectors,omitempty" protobuf:"bytes,2,name=selectors"`
 
 	// AllocationMode and its related fields define how devices are allocated
@@ -961,6 +966,7 @@ type DeviceSubRequest struct {
 	//
 	// +optional
 	// +listType=atomic
+	// +k8s:maxItems=32
 	Selectors []DeviceSelector `json:"selectors,omitempty" protobuf:"bytes,3,name=selectors"`
 
 	// AllocationMode and its related fields define how devices are allocated
@@ -1185,6 +1191,7 @@ type DeviceConstraint struct {
 	//
 	// +optional
 	// +listType=atomic
+	// +k8s:maxItems=32
 	Requests []string `json:"requests,omitempty" protobuf:"bytes,1,opt,name=requests"`
 
 	// MatchAttribute requires that all devices in question have this
@@ -1242,6 +1249,7 @@ type DeviceClaimConfiguration struct {
 	//
 	// +optional
 	// +listType=atomic
+	// +k8s:maxItems=32
 	Requests []string `json:"requests,omitempty" protobuf:"bytes,1,opt,name=requests"`
 
 	DeviceConfiguration `json:",inline" protobuf:"bytes,2,name=deviceConfiguration"`
@@ -1868,6 +1876,7 @@ type NetworkDeviceData struct {
 	//
 	// +optional
 	// +listType=atomic
+	// +k8s:maxItems=16
 	IPs []string `json:"ips,omitempty" protobuf:"bytes,2,opt,name=ips"`
 
 	// HardwareAddress represents the hardware address (e.g. MAC Address) of the device's network interface.

@@ -129,15 +129,15 @@ func validateDeviceClaim(deviceClaim *resource.DeviceClaim, fldPath *field.Path,
 		func(request resource.DeviceRequest) (string, string) {
 			return request.Name, "name"
 		},
-		fldPath.Child("requests"))...)
+		fldPath.Child("requests"), sizeCovered)...)
 	allErrs = append(allErrs, validateSlice(deviceClaim.Constraints, resource.DeviceConstraintsMaxSize,
 		func(constraint resource.DeviceConstraint, fldPath *field.Path) field.ErrorList {
 			return validateDeviceConstraint(constraint, fldPath, requestNames)
-		}, fldPath.Child("constraints"))...)
+		}, fldPath.Child("constraints"), sizeCovered)...)
 	allErrs = append(allErrs, validateSlice(deviceClaim.Config, resource.DeviceConfigMaxSize,
 		func(config resource.DeviceClaimConfiguration, fldPath *field.Path) field.ErrorList {
 			return validateDeviceClaimConfiguration(config, fldPath, requestNames, stored)
-		}, fldPath.Child("config"))...)
+		}, fldPath.Child("config"), sizeCovered)...)
 	return allErrs
 }
 
@@ -204,7 +204,7 @@ func validateDeviceRequest(request resource.DeviceRequest, fldPath *field.Path, 
 			func(subRequest resource.DeviceSubRequest) (string, string) {
 				return subRequest.Name, "name"
 			},
-			fldPath.Child("firstAvailable"))...)
+			fldPath.Child("firstAvailable"), sizeCovered)...)
 	}
 
 	if request.Exactly != nil {
@@ -276,7 +276,7 @@ func validateSelectorSlice(selectors []resource.DeviceSelector, fldPath *field.P
 		func(selector resource.DeviceSelector, fldPath *field.Path) field.ErrorList {
 			return validateSelector(selector, fldPath, stored)
 		},
-		fldPath)
+		fldPath, sizeCovered)
 }
 
 func validateSelector(selector resource.DeviceSelector, fldPath *field.Path, stored bool) field.ErrorList {
@@ -332,7 +332,7 @@ func validateDeviceConstraint(constraint resource.DeviceConstraint, fldPath *fie
 		func(name string, fldPath *field.Path) field.ErrorList {
 			return validateRequestNameRef(name, fldPath, requestNames)
 		},
-		stringKey, fldPath.Child("requests"))...)
+		stringKey, fldPath.Child("requests"), sizeCovered)...)
 	if constraint.MatchAttribute != nil {
 		allErrs = append(allErrs, validateFullyQualifiedName(*constraint.MatchAttribute, fldPath.Child("matchAttribute"))...)
 	} else if constraint.DistinctAttribute != nil {
@@ -350,7 +350,7 @@ func validateDeviceClaimConfiguration(config resource.DeviceClaimConfiguration, 
 	allErrs = append(allErrs, validateSet(config.Requests, resource.DeviceRequestsMaxSize,
 		func(name string, fldPath *field.Path) field.ErrorList {
 			return validateRequestNameRef(name, fldPath, requestNames)
-		}, stringKey, fldPath.Child("requests"))...)
+		}, stringKey, fldPath.Child("requests"), sizeCovered)...)
 	allErrs = append(allErrs, validateDeviceConfiguration(config.DeviceConfiguration, fldPath, stored)...)
 	return allErrs
 }
@@ -1270,7 +1270,7 @@ func validateNetworkDeviceData(networkDeviceData *resource.NetworkDeviceData, fl
 	allErrs = append(allErrs, validateSet(networkDeviceData.IPs, resource.NetworkDeviceDataMaxIPs,
 		func(address string, fldPath *field.Path) field.ErrorList {
 			return validation.IsValidInterfaceAddress(fldPath, address)
-		}, stringKey, fldPath.Child("ips"))...)
+		}, stringKey, fldPath.Child("ips"), sizeCovered)...)
 	return allErrs
 }
 
