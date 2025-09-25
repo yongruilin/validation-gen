@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apimachinery/pkg/api/operation"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/storage/names"
@@ -112,7 +113,8 @@ func (cronJobStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Ob
 func (cronJobStrategy) Validate(ctx context.Context, obj runtime.Object) field.ErrorList {
 	cronJob := obj.(*batch.CronJob)
 	opts := pod.GetValidationOptionsFromPodTemplate(&cronJob.Spec.JobTemplate.Spec.Template, nil)
-	return batchvalidation.ValidateCronJobCreate(cronJob, opts)
+	allErrs := batchvalidation.ValidateCronJobCreate(cronJob, opts)
+	return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, cronJob, nil, allErrs, operation.Create)
 }
 
 // WarningsOnCreate returns warnings for the creation of the given object.
@@ -145,7 +147,8 @@ func (cronJobStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Obje
 	oldCronJob := old.(*batch.CronJob)
 
 	opts := pod.GetValidationOptionsFromPodTemplate(&newCronJob.Spec.JobTemplate.Spec.Template, &oldCronJob.Spec.JobTemplate.Spec.Template)
-	return batchvalidation.ValidateCronJobUpdate(newCronJob, oldCronJob, opts)
+	errs := batchvalidation.ValidateCronJobUpdate(newCronJob, oldCronJob, opts)
+	return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, newCronJob, oldCronJob, errs, operation.Update)
 }
 
 // WarningsOnUpdate returns warnings for the given update.
